@@ -15,8 +15,8 @@ import org.supreme.exceptions.ItemExistsException;
 import org.supreme.exceptions.ItemNotFoundException;
 import org.supreme.exceptions.UnauthorisedRequestException;
 import org.supreme.models.User;
+import org.supreme.service.TokenService;
 import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
-import software.amazon.awssdk.services.dynamodb.model.DuplicateItemException;
 
 import java.util.Map;
 import java.util.UUID;
@@ -25,56 +25,70 @@ import java.util.UUID;
 @RequestMapping("/api/v1")
 public class AuthController {
 
-    @Autowired
-    UserDao userDao;
+  @Autowired UserDao userDao;
 
-    @Autowired
-    BCryptPasswordEncoder bCryptPasswordEncoder;
+  @Autowired BCryptPasswordEncoder bCryptPasswordEncoder;
 
-    @PostMapping("/sign-up")
-    public ResponseEntity<Object> signUp(@RequestBody Map<String, Object> reqBody) {
+  @Autowired TokenService tokenService;
 
-        String userName = (String) reqBody.getOrDefault("user_name", "");
-        String password = (String) reqBody.getOrDefault("password", "");
+  @PostMapping("/sign-up")
+  public ResponseEntity<Object> signUp(@RequestBody Map<String, Object> reqBody) {
 
-        if (StringUtils.isBlank(userName) ||
-                StringUtils.isBlank(password)) throw new InvalidRequestException("Invalid Request");
+    String userName = (String) reqBody.getOrDefault("user_name", "");
+    String password = (String) reqBody.getOrDefault("password", "");
 
-        String userId = UUID.randomUUID().toString();
-        String passwordHash = bCryptPasswordEncoder.encode(password);
+    if (StringUtils.isBlank(userName) || StringUtils.isBlank(password))
+      throw new InvalidRequestException("Invalid Request");
 
-        try {
-            User user = new User(userId, userName, passwordHash);
-            userDao.insert(user);
-            return ResponseEntity.ok(Map.of("message", "User signed up!"));
-        } catch (ConditionalCheckFailedException e) {
-            throw new ItemExistsException("Username is already taken, choose another one!");
-        }
+    String userId = UUID.randomUUID().toString();
+    String passwordHash = bCryptPasswordEncoder.encode(password);
 
+    try {
+      User user = new User(userId, userName, passwordHash);
+      userDao.insert(user);
+      return ResponseEntity.ok(
+          Map.of(
+              "message",
+              "User signed up!",
+              "user_name",
+              user.getUserName(),
+              "user_id",
+              user.getUserId()));
+    } catch (ConditionalCheckFailedException e) {
+      throw new ItemExistsException("Username is already taken, choose another one!");
+    }
+  }
+
+  @PostMapping("/login")
+  public ResponseEntity<Object> login(@RequestBody Map<String, Object> reqBody) {
+
+    String userName = (String) reqBody.getOrDefault("user_name", "");
+    String password = (String) reqBody.getOrDefault("password", "");
+
+    if (StringUtils.isBlank(userName) || StringUtils.isBlank(password))
+      throw new InvalidRequestException("Invalid Request");
+
+    User user = userDao.fetch(userName);
+
+    if (ObjectUtils.isEmpty(user)) throw new ItemNotFoundException("User does not exists!");
+
+    boolean isPassValid = bCryptPasswordEncoder.matches(password, user.getPasswordHash());
+
+    if (!isPassValid) {
+      throw new UnauthorisedRequestException("User not authorised!");
     }
 
-    @PostMapping("/login")
-    public ResponseEntity<Object> login(@RequestBody Map<String, Object> reqBody) {
+    String token = tokenService.generateToken(user.getUserId());
 
-        String userName = (String) reqBody.getOrDefault("user_name", "");
-        String password = (String) reqBody.getOrDefault("password", "");
-
-        if (StringUtils.isBlank(userName) ||
-                StringUtils.isBlank(password)) throw new InvalidRequestException("Invalid Request");
-
-        User user = userDao.fetch(userName);
-
-        if(ObjectUtils.isEmpty(user)) throw new ItemNotFoundException("User does not exists!");
-
-        boolean isPassValid = bCryptPasswordEncoder.matches(password, user.getPasswordHash());
-
-        if(!isPassValid){
-            throw new UnauthorisedRequestException("User not authorised!");
-        }
-
-        return ResponseEntity.ok(Map.of("message", "User logged in!"));
-
-    }
-
-
+    return ResponseEntity.ok(
+        Map.of(
+            "message",
+            "User logged in!",
+            "user_name",
+            user.getUserName(),
+            "user_id",
+            user.getUserId(),
+            "token",
+            token));
+  }
 }
